@@ -28,8 +28,11 @@ def main():
             if folder.is_dir():
                 candidates.update(
                     path for path in folder.iterdir()
-                    if path.is_file() and path.name.upper().startswith(
-                        ("LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE", "OFL")
+                    if path.is_file() and (
+                        path.name.upper().startswith(
+                            ("LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE", "OFL", "UFL")
+                        )
+                        or folder.name == "fonts" and path.suffix.lower() == ".txt"
                     )
                 )
         if package.get("license_file"):

@@ -90,7 +90,22 @@ jobs:
           $tag = "v$version"
           $releases = gh api --paginate "repos/$env:GITHUB_REPOSITORY/releases" --jq '.[].tag_name'
           if ($releases -contains $tag) {
-            Write-Host "Release $tag already exists."
+            $tagUrl = "refs/tags/${tag}"
+            git fetch --depth 1 origin "${tagUrl}:${tagUrl}"
+            if ($LASTEXITCODE -ne 0) { throw "Could not fetch $tag." }
+            git diff --quiet $tag HEAD -- Cargo.lock LICENSE assets/ULTRAFACE-LICENSE.txt
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "Release $tag uses different dependencies or licenses and is already published."
+              exit 0
+            }
+            $notice = 'THIRD-PARTY-NOTICES.txt'
+            $remoteDigest = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" --jq '.assets[] | select(.name == "THIRD-PARTY-NOTICES.txt") | .digest'
+            if ($LASTEXITCODE -ne 0) { throw "Could not look up $tag assets." }
+            $localDigest = 'sha256:' + (Get-FileHash "target/release/$notice").Hash.ToLowerInvariant()
+            if ($remoteDigest -ne $localDigest) {
+              gh release upload $tag "target/release/$notice" --clobber
+              if ($LASTEXITCODE -ne 0) { throw "Could not update the notices for $tag." }
+            }
             exit 0
           }
           gh release create $tag target/release/blur-and-save.exe target/release/THIRD-PARTY-NOTICES.txt --target "$env:GITHUB_SHA" --title "Blur & Save $version" --notes 'Download blur-and-save.exe for Windows 10 or 11 (64-bit) and double-click it. Open a photo, check the detected faces, and save a copy. The app works offline.'

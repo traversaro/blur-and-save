@@ -240,14 +240,12 @@ impl App {
             if ui
                 .add_enabled(!busy, egui::Button::new("Open photo…"))
                 .clicked()
-            {
-                if let Some(path) = rfd::FileDialog::new()
+                && let Some(path) = rfd::FileDialog::new()
                     .set_title("Open a photo")
                     .add_filter("Photos", &["jpg", "jpeg", "png", "webp"])
                     .pick_file()
-                {
-                    self.open(&ctx, path);
-                }
+            {
+                self.open(&ctx, path);
             }
 
             let can_save = self
@@ -361,16 +359,17 @@ impl App {
             if !ui.input(|input| input.pointer.primary_down()) {
                 self.drag = None;
             }
-            if !busy && response.secondary_clicked() {
-                if let Some(index) = cursor.and_then(|point| {
+            if !busy
+                && response.secondary_clicked()
+                && let Some(index) = cursor.and_then(|point| {
                     photo
                         .regions
                         .iter()
                         .rposition(|region| region.contains(local(point)))
-                }) {
-                    photo.regions.remove(index);
-                    changed = true;
-                }
+                })
+            {
+                photo.regions.remove(index);
+                changed = true;
             }
             if self.show_original {
                 for region in &photo.regions {
@@ -394,16 +393,16 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.update_job(ctx);
-        if self.pending.is_none() {
-            if let Some(path) = ctx.input(|input| {
+        if self.pending.is_none()
+            && let Some(path) = ctx.input(|input| {
                 input
                     .raw
                     .dropped_files
                     .iter()
                     .find_map(|file| file.path.clone())
-            }) {
-                self.open(ctx, path);
-            }
+            })
+        {
+            self.open(ctx, path);
         }
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {

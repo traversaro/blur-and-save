@@ -96,12 +96,15 @@ mod tests {
         let portrait = image::load_from_memory(include_bytes!("../tests/fixtures/astronaut.jpg"))
             .unwrap()
             .into_rgba8();
+        let regions = detector.faces(&portrait).unwrap();
+        let [face] = regions.as_slice() else {
+            panic!("Expected one face, got {regions:?}");
+        };
+        assert!(face.contains([0.44, 0.24]));
+        let [width, height] = face.size();
         assert!(
-            detector
-                .faces(&portrait)
-                .unwrap()
-                .iter()
-                .any(|face| face.contains([0.44, 0.24]))
+            width * height < 0.125,
+            "Detected face box is too large: {face:?}"
         );
         let blank = RgbaImage::from_pixel(640, 480, image::Rgba([127, 127, 127, 255]));
         assert!(detector.faces(&blank).unwrap().is_empty());
