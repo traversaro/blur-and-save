@@ -1,0 +1,96 @@
+name: Windows build and release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: prefix-dev/setup-pixi@9936258fee697aff89b3fed6ca1f80a382ef694e # v0.11.3
+        with:
+          pixi-version: v0.84.2
+          locked: true
+
+      - name: Test and build with Pixi
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$vs) { throw 'Visual Studio C++ tools were not found.' }
+          Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          pixi run --locked rustc --version
+          pixi run --locked cargo fmt --check
+          pixi run --locked test
+          pixi run --locked build
+
+          $imports = dumpbin /dependents target\release\blur-and-save.exe | Out-String
+          Write-Host $imports
+          if ($imports -match '(?im)^\s*(?:VCRUNTIME|MSVCP|MSVCR|VCOMP)\w*\.dll\s*$') {
+            throw 'The executable requires a separately installed Visual C++ runtime.'
+          }
+
+      - name: Test standalone executable with outbound traffic blocked
+        shell: pwsh
+        run: |
+          $sandbox = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP\blur-and-save-smoke"
+          $exe = Join-Path $sandbox.FullName 'blur-and-save.exe'
+          $result = Join-Path $sandbox.FullName 'blurred.png'
+          Copy-Item 'target\release\blur-and-save.exe' $exe
+          Copy-Item 'tests\fixtures\astronaut.jpg' $sandbox.FullName
+          if ((Get-Item $exe).VersionInfo.ProductName -ne 'Blur & Save') {
+            throw 'The Windows application resources are missing.'
+          }
+          $disabled = @(Get-NetFirewallProfile | Where-Object { -not $_.Enabled } | Select-Object -ExpandProperty Name)
+          try {
+            if ($disabled.Count -gt 0) {
+              Set-NetFirewallProfile -Profile $disabled -Enabled True
+            }
+            New-NetFirewallRule -Name 'BlurAndSaveOfflineSmoke' -DisplayName 'Blur & Save offline smoke test' -Direction Outbound -Program $exe -Action Block -Profile Any | Out-Null
+            $process = Start-Process -FilePath $exe -WorkingDirectory $sandbox.FullName -ArgumentList '--offline-smoke-test astronaut.jpg blurred.png' -PassThru -Wait
+            if ($process.ExitCode -ne 0 -or !(Test-Path $result)) {
+              throw "Standalone offline test failed (exit code $($process.ExitCode))."
+            }
+          } finally {
+            Remove-NetFirewallRule -Name 'BlurAndSaveOfflineSmoke' -ErrorAction SilentlyContinue
+            if ($disabled.Count -gt 0) {
+              Set-NetFirewallProfile -Profile $disabled -Enabled False
+            }
+          }
+
+      - name: Collect redistribution notices
+        shell: pwsh
+        run: python .github/collect_notices.py
+
+      - name: Publish executable
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $project = pixi run --locked cargo metadata --no-deps --locked --format-version 1 | ConvertFrom-Json
+          $package = $project.packages | Where-Object { $_.name -eq 'blur-and-save' }
+          $version = $package.version
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Unexpected version $version" }
+          $tag = "v$version"
+          $releases = gh api --paginate "repos/$env:GITHUB_REPOSITORY/releases" --jq '.[].tag_name'
+          if ($releases -contains $tag) {
+            Write-Host "Release $tag already exists."
+            exit 0
+          }
+          gh release create $tag target/release/blur-and-save.exe target/release/THIRD-PARTY-NOTICES.txt --target "$env:GITHUB_SHA" --title "Blur & Save $version" --notes 'Download blur-and-save.exe for Windows 10 or 11 (64-bit) and double-click it. Open a photo, check the detected faces, and save a copy. The app works offline.'
