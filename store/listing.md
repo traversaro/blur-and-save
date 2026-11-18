@@ -22,6 +22,13 @@ Blur & Save works offline. Your original photo stays untouched.
 - [Privacy policy](https://github.com/traversaro/blur-and-save/blob/main/PRIVACY.md)
 - [Support](https://github.com/traversaro/blur-and-save/issues)
 
+## Listing images
+
+- [Face blur preview](screenshots/face-blur.png), 1600 × 900 PNG.
+- Caption: Review the detected faces before saving your edited photo.
+- The sample photo shows fictional people.
+- [Store tile icon](tile-icon.png), 300 × 300 PNG.
+
 ## Restricted capability justification
 
 Blur & Save is a Windows desktop app. It uses the standard Windows file dialogs to open photos and save copies in user-selected locations. The package declares `runFullTrust` for its Win32 desktop entry point. It runs as the current user and does not request administrator access.
