@@ -1,0 +1,100 @@
+name: Microsoft Store MSIX
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/store.yml
+      - store/AppxManifest.xml
+      - store/package.ps1
+      - store/logos/**
+  workflow_dispatch:
+    inputs:
+      package_name:
+        description: Package/Identity/Name from Partner Center Product identity
+        required: true
+      publisher:
+        description: Package/Identity/Publisher from Partner Center Product identity
+        required: true
+      publisher_display_name:
+        description: Package/Properties/PublisherDisplayName from Partner Center Product identity
+        required: true
+      display_name:
+        description: Exact reserved Store product name
+        default: Blur & Save
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: prefix-dev/setup-pixi@9936258fee697aff89b3fed6ca1f80a382ef694e # v0.11.3
+        with:
+          pixi-version: v0.84.2
+          locked: true
+
+      - name: Build and test with Pixi
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$vs) { throw 'Visual Studio C++ tools were not found.' }
+          Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          pixi run --locked test
+          pixi run --locked build
+          python .github/collect_notices.py
+
+      - name: Package and inspect MSIX
+        id: msix
+        shell: pwsh
+        env:
+          STORE_NAME: ${{ inputs.package_name }}
+          STORE_PUBLISHER: ${{ inputs.publisher }}
+          STORE_PUBLISHER_DISPLAY: ${{ inputs.publisher_display_name }}
+          STORE_DISPLAY: ${{ inputs.display_name }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $project = pixi run --locked cargo metadata --no-deps --locked --format-version 1 | ConvertFrom-Json
+          $version = [version] ($project.packages | Where-Object name -eq 'blur-and-save').version
+          $packageVersion = "$($version.Major + 1).$($version.Minor).$($version.Build).0"
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            $artifact = 'blur-and-save-store'
+            if ($env:STORE_NAME -eq 'BlurAndSave.PackagingTest') { throw 'Use the Package Name from Partner Center.' }
+          } else {
+            $artifact = 'blur-and-save-packaging-test'
+            $env:STORE_NAME = 'BlurAndSave.PackagingTest'
+            $env:STORE_PUBLISHER = 'CN=BlurAndSavePackagingTest'
+            $env:STORE_PUBLISHER_DISPLAY = 'Blur and Save Packaging Test'
+            $env:STORE_DISPLAY = 'Blur & Save'
+          }
+          $output = "target/msix/$artifact-$packageVersion-x64.msix"
+          $parameters = @{
+            PackageName = $env:STORE_NAME
+            Publisher = $env:STORE_PUBLISHER
+            PublisherDisplayName = $env:STORE_PUBLISHER_DISPLAY
+            DisplayName = $env:STORE_DISPLAY
+            PackageVersion = $packageVersion
+            Executable = 'target/release/blur-and-save.exe'
+            Notices = 'target/release/THIRD-PARTY-NOTICES.txt'
+            Output = $output
+          }
+          ./store/package.ps1 @parameters
+          "name=$artifact" >> $env:GITHUB_OUTPUT
+          "path=$output" >> $env:GITHUB_OUTPUT
+
+      - name: Upload the MSIX
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.msix.outputs.name }}
+          path: ${{ steps.msix.outputs.path }}
+          if-no-files-found: error
